@@ -43,19 +43,26 @@ class ScanUseCase:
     def start_scan(
         self,
         scan_type: ScanType,
-        target_path: str,
+        target_path: str | list[str],
         progress_callback: Callable[[str, int, int], None],
         on_complete: Callable[[ScanSession], None],
     ) -> None:
         """
         Begin a scan. Designed to be called from a background thread.
-        `on_complete` fires when scan finishes (or is cancelled).
+        `target_path` may be a single path string or a list of paths (for
+        quick scans that cover multiple high-risk directories).
+        `on_complete` fires when all paths have been scanned (or cancelled).
         """
+        paths: list[str] = (
+            target_path if isinstance(target_path, list) else [target_path]
+        )
+        display_path = paths[0] if len(paths) == 1 else f"{len(paths)} rutas"
+
         session_id = str(uuid.uuid4())[:8]
         session = ScanSession(
             session_id=session_id,
             scan_type=scan_type,
-            target_path=target_path,
+            target_path=display_path,
             started_at=datetime.now(),
             status=ScanStatus.RUNNING,
         )
@@ -64,27 +71,45 @@ class ScanUseCase:
         self._active_token = self._engine.create_token()
 
         try:
-            logger.info(f"[{session_id}] Starting {scan_type.value} scan on '{target_path}'")
-
-            raw_summary = self._engine.scan_directory(
-                path=target_path,
-                progress_callback=progress_callback,
-                cancellation_token=self._active_token,
+            logger.info(
+                f"[{session_id}] Starting {scan_type.value} scan on {paths}"
             )
 
-            # Map raw Rust results to domain models
-            threats = [
-                self._map_to_threat(r)
-                for r in raw_summary.threats
-            ]
+            total_files = 0
+            threats_found = 0
+            skipped_files = 0
+            all_threats: list[ThreatRecord] = []
+            was_cancelled = False
+
+            for path in paths:
+                if self._active_token.is_cancelled():
+                    was_cancelled = True
+                    break
+
+                raw_summary = self._engine.scan_directory(
+                    path=path,
+                    progress_callback=progress_callback,
+                    cancellation_token=self._active_token,
+                )
+
+                total_files += raw_summary.total_files
+                threats_found += raw_summary.threats_found
+                skipped_files += raw_summary.skipped_files
+                all_threats.extend(
+                    self._map_to_threat(r) for r in raw_summary.threats
+                )
+
+                if raw_summary.was_cancelled:
+                    was_cancelled = True
+                    break
 
             session.finished_at = datetime.now()
-            session.total_files = raw_summary.total_files
-            session.threats_count = raw_summary.threats_found
-            session.skipped_files = raw_summary.skipped_files
-            session.threats = threats
+            session.total_files = total_files
+            session.threats_count = threats_found
+            session.skipped_files = skipped_files
+            session.threats = all_threats
             session.status = (
-                ScanStatus.CANCELLED if raw_summary.was_cancelled
+                ScanStatus.CANCELLED if was_cancelled
                 else ScanStatus.COMPLETE
             )
 

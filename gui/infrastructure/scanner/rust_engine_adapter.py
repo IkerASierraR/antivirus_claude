@@ -79,6 +79,11 @@ class RustScanEngineAdapter:
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         self._db_path = db_path
 
+    @property
+    def db_path(self) -> str:
+        """Path to the SQLite signatures database."""
+        return self._db_path
+
     # ── IScanEngine methods ────────────────────────
 
     def scan_directory(
