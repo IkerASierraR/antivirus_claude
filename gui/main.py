@@ -26,6 +26,7 @@ logger = logging.getLogger("rustguard.main")
 from gui.infrastructure.scanner.rust_engine_adapter import RustScanEngineAdapter
 from gui.infrastructure.repositories.scan_repository import JsonScanRepository
 from gui.infrastructure.repositories.quarantine_repository import JsonQuarantineRepository
+from gui.infrastructure.monitor.filesystem_monitor import FilesystemMonitor
 
 # ── Application use cases ─────────────────────────
 from gui.application.use_cases.scan_use_case import (
@@ -48,11 +49,20 @@ def main() -> None:
     quarantine_uc = QuarantineUseCase(q_repo)
     history_uc   = HistoryUseCase(scan_repo)
 
+    from gui.shared.constants import get_quick_scan_paths
+    monitor = FilesystemMonitor(
+        engine=engine,
+        watch_paths=get_quick_scan_paths(),
+        on_threat_found=lambda path, name, method: None,  # overridden by MainWindow
+    )
+
     # ── Launch GUI ──
     app = MainWindow(
         scan_uc=scan_uc,
         quarantine_uc=quarantine_uc,
         history_uc=history_uc,
+        monitor=monitor,
+        engine=engine,
     )
     app.mainloop()
 

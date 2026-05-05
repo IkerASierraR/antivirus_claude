@@ -145,12 +145,16 @@ class MainWindow(ctk.CTk):
         scan_uc: ScanUseCase,
         quarantine_uc: QuarantineUseCase,
         history_uc: HistoryUseCase,
+        monitor=None,
+        engine=None,
     ):
         super().__init__()
 
         self._scan_uc = scan_uc
         self._quarantine_uc = quarantine_uc
         self._history_uc = history_uc
+        self._monitor = monitor
+        self._engine = engine
 
         # ── State ──
         self._scan_thread: threading.Thread | None = None
@@ -160,6 +164,10 @@ class MainWindow(ctk.CTk):
 
         self._setup_window()
         self._build_ui()
+
+        # Wire monitor threat callback now that the UI exists
+        if self._monitor is not None:
+            self._monitor._on_threat_found = self._on_realtime_threat
 
     # ── Window setup ───────────────────────────────
 
@@ -213,10 +221,12 @@ class MainWindow(ctk.CTk):
         self._tabs.add("🔍  Escáner")
         self._tabs.add("🔒  Cuarentena")
         self._tabs.add("📋  Historial")
+        self._tabs.add("⚙️  Ajustes")
 
         self._build_scanner_tab(self._tabs.tab("🔍  Escáner"))
         self._build_quarantine_tab(self._tabs.tab("🔒  Cuarentena"))
         self._build_history_tab(self._tabs.tab("📋  Historial"))
+        self._build_settings_tab(self._tabs.tab("⚙️  Ajustes"))
 
     # ══════════════════════════════════════════════
     #  TAB 1 — ESCÁNER
@@ -578,6 +588,236 @@ class MainWindow(ctk.CTk):
         self._show_toast("Historial limpiado.")
 
     # ══════════════════════════════════════════════
+    #  TAB 4 — AJUSTES
+    # ══════════════════════════════════════════════
+
+    def _build_settings_tab(self, parent):
+        parent.configure(fg_color=COLOR_BG)
+
+        scroll = ctk.CTkScrollableFrame(parent, fg_color=COLOR_BG, corner_radius=0)
+        scroll.pack(fill="both", expand=True, padx=4, pady=4)
+
+        # ── Section: Real-time protection ──────────
+        rt_card = Card(scroll)
+        rt_card.pack(fill="x", padx=4, pady=(12, 6))
+
+        rt_header = ctk.CTkFrame(rt_card, fg_color="transparent")
+        rt_header.pack(fill="x", padx=16, pady=(12, 4))
+
+        ctk.CTkLabel(
+            rt_header, text="🛡  Protección en Tiempo Real",
+            font=ctk.CTkFont(size=14, weight="bold"),
+            text_color=COLOR_TEXT,
+        ).pack(side="left")
+
+        self._rt_status_lbl = ctk.CTkLabel(
+            rt_header, text="● Inactiva",
+            font=ctk.CTkFont(size=11, weight="bold"),
+            text_color=COLOR_TEXT_DIM,
+        )
+        self._rt_status_lbl.pack(side="right")
+
+        ctk.CTkLabel(
+            rt_card,
+            text=(
+                "Monitorea las carpetas de alto riesgo en tiempo real y alerta\n"
+                "automáticamente cuando se detecta un archivo sospechoso."
+            ),
+            font=ctk.CTkFont(size=11),
+            text_color=COLOR_TEXT_DIM,
+            justify="left",
+        ).pack(anchor="w", padx=16, pady=(0, 8))
+
+        rt_btn_row = ctk.CTkFrame(rt_card, fg_color="transparent")
+        rt_btn_row.pack(fill="x", padx=16, pady=(0, 12))
+
+        self._btn_rt_start = ctk.CTkButton(
+            rt_btn_row, text="▶  Activar protección",
+            width=180, height=36,
+            fg_color=COLOR_SAFE, hover_color="#00a843",
+            text_color="#000",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            command=self._toggle_realtime_protection,
+        )
+        self._btn_rt_start.pack(side="left")
+
+        # Show watchdog unavailable notice if needed
+        if self._monitor is not None and not self._monitor.is_available:
+            ctk.CTkLabel(
+                rt_card,
+                text="⚠  watchdog no instalado. Ejecuta: pip install watchdog",
+                font=ctk.CTkFont(size=10),
+                text_color=COLOR_WARNING,
+            ).pack(anchor="w", padx=16, pady=(0, 8))
+
+        # List watch paths
+        paths = get_quick_scan_paths()
+        if paths:
+            ctk.CTkLabel(
+                rt_card,
+                text="Rutas vigiladas:\n" + "\n".join(f"  • {p}" for p in paths),
+                font=ctk.CTkFont(size=10),
+                text_color=COLOR_TEXT_DIM,
+                justify="left",
+            ).pack(anchor="w", padx=16, pady=(0, 12))
+
+        # ── Section: Firma de malware (signatures) ──
+        sig_card = Card(scroll)
+        sig_card.pack(fill="x", padx=4, pady=6)
+
+        ctk.CTkLabel(
+            sig_card, text="📦  Base de Firmas",
+            font=ctk.CTkFont(size=14, weight="bold"),
+            text_color=COLOR_TEXT,
+        ).pack(anchor="w", padx=16, pady=(12, 4))
+
+        ctk.CTkLabel(
+            sig_card,
+            text=(
+                "Importa hashes SHA-256 / MD5 desde un archivo JSON.\n"
+                "Formato: [{\"sha256\": \"...\", \"name\": \"...\", \"severity\": \"high\"}, ...]"
+            ),
+            font=ctk.CTkFont(size=11),
+            text_color=COLOR_TEXT_DIM,
+            justify="left",
+        ).pack(anchor="w", padx=16, pady=(0, 8))
+
+        sig_btn_row = ctk.CTkFrame(sig_card, fg_color="transparent")
+        sig_btn_row.pack(fill="x", padx=16, pady=(0, 8))
+
+        ctk.CTkButton(
+            sig_btn_row, text="📂  Importar firmas JSON",
+            width=200, height=36,
+            fg_color=COLOR_ACCENT, hover_color="#00b894", text_color="#000",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            command=self._import_signatures,
+        ).pack(side="left")
+
+        self._lbl_sig_result = ctk.CTkLabel(
+            sig_btn_row, text="",
+            font=ctk.CTkFont(size=11),
+            text_color=COLOR_TEXT_DIM,
+        )
+        self._lbl_sig_result.pack(side="left", padx=12)
+
+        # DB path info
+        db_path = (
+            self._engine._db_path
+            if self._engine is not None and hasattr(self._engine, "_db_path")
+            else "N/A"
+        )
+        ctk.CTkLabel(
+            sig_card,
+            text=f"Base de datos: {db_path}",
+            font=ctk.CTkFont(size=9),
+            text_color=COLOR_TEXT_DIM,
+        ).pack(anchor="w", padx=16, pady=(0, 12))
+
+        # ── Section: Rutas de escaneo rápido ────────
+        paths_card = Card(scroll)
+        paths_card.pack(fill="x", padx=4, pady=6)
+
+        ctk.CTkLabel(
+            paths_card, text="⚡  Rutas de Escaneo Rápido",
+            font=ctk.CTkFont(size=14, weight="bold"),
+            text_color=COLOR_TEXT,
+        ).pack(anchor="w", padx=16, pady=(12, 4))
+
+        quick_paths = get_quick_scan_paths()
+        if quick_paths:
+            paths_text = "\n".join(f"  {i+1}. {p}" for i, p in enumerate(quick_paths))
+        else:
+            paths_text = "  No se encontraron rutas de alto riesgo en este sistema."
+
+        ctk.CTkLabel(
+            paths_card,
+            text=paths_text,
+            font=ctk.CTkFont(size=11),
+            text_color=COLOR_TEXT_DIM,
+            justify="left",
+        ).pack(anchor="w", padx=16, pady=(0, 12))
+
+    def _toggle_realtime_protection(self):
+        if self._monitor is None:
+            self._show_toast("Monitor no disponible.", error=True)
+            return
+
+        if self._monitor.is_running:
+            self._monitor.stop()
+            self._btn_rt_start.configure(
+                text="▶  Activar protección",
+                fg_color=COLOR_SAFE,
+                hover_color="#00a843",
+                text_color="#000",
+            )
+            self._rt_status_lbl.configure(text="● Inactiva", text_color=COLOR_TEXT_DIM)
+            self._status_dot.configure(text="● PROTEGIDO", text_color=COLOR_SAFE)
+            self._show_toast("Protección en tiempo real desactivada.")
+        else:
+            started = self._monitor.start()
+            if started:
+                self._btn_rt_start.configure(
+                    text="⏹  Detener protección",
+                    fg_color=COLOR_BUTTON_RED,
+                    hover_color="#e74c3c",
+                    text_color="white",
+                )
+                self._rt_status_lbl.configure(text="● Activa", text_color=COLOR_SAFE)
+                self._status_dot.configure(
+                    text="● PROTECCIÓN ACTIVA", text_color=COLOR_SAFE
+                )
+                self._show_toast("✔ Protección en tiempo real activada.")
+            else:
+                self._show_toast(
+                    "No se pudo iniciar el monitor. Verifica que watchdog esté instalado.",
+                    error=True,
+                )
+
+    def _on_realtime_threat(self, path: str, threat_name: str, method: str):
+        """Called from watchdog thread — schedule UI notification on main thread."""
+        self.after(0, self._show_realtime_alert, path, threat_name)
+
+    def _show_realtime_alert(self, path: str, threat_name: str):
+        """Runs on main thread — shows a persistent alert for a real-time detection."""
+        self._status_dot.configure(
+            text=f"● AMENAZA DETECTADA", text_color=COLOR_THREAT
+        )
+        # Show a toast (longer duration for real-time alerts)
+        short_path = path if len(path) <= 55 else "…" + path[-52:]
+        self._show_toast(
+            f"🚨 [{threat_name[:30]}] en {short_path}",
+            error=True,
+            duration_ms=8000,
+        )
+
+    def _import_signatures(self):
+        if self._engine is None:
+            self._show_toast("Motor no disponible.", error=True)
+            return
+
+        filepath = filedialog.askopenfilename(
+            title="Seleccionar archivo de firmas JSON",
+            filetypes=[("Archivos JSON", "*.json"), ("Todos los archivos", "*.*")],
+        )
+        if not filepath:
+            return
+
+        try:
+            count = self._engine.import_signatures(filepath)
+            self._lbl_sig_result.configure(
+                text=f"✔ {count} firmas importadas",
+                text_color=COLOR_SAFE,
+            )
+            self._show_toast(f"✔ {count} firmas importadas correctamente.")
+        except Exception as exc:
+            logger.error(f"Signature import failed: {exc}", exc_info=True)
+            self._lbl_sig_result.configure(
+                text=f"✗ Error: {exc}",
+                text_color=COLOR_THREAT,
+            )
+            self._show_toast("✗ Error al importar firmas.", error=True)
+
+    # ══════════════════════════════════════════════
     #  SCAN ORCHESTRATION
     # ══════════════════════════════════════════════
 
@@ -586,9 +826,8 @@ class MainWindow(ctk.CTk):
         if not paths:
             self._show_toast("No se encontraron rutas de escaneo rápido en este sistema.", error=True)
             return
-        # Scan first quick-scan path (most risky one)
-        # For a real quick scan, iterate all; here we use the first for demo
-        self._begin_scan(ScanType.QUICK, paths[0])
+        # Scan all high-risk paths in a single session
+        self._begin_scan(ScanType.QUICK, paths)
 
     def _start_full_scan(self):
         self._begin_scan(ScanType.FULL, get_full_scan_path())
@@ -608,9 +847,14 @@ class MainWindow(ctk.CTk):
         if filepath:
             self._begin_single_scan(filepath)
 
-    def _begin_scan(self, scan_type: ScanType, target: str):
+    def _begin_scan(self, scan_type: ScanType, target: str | list[str]):
         if self._is_scanning:
             return
+
+        target_label = (
+            target if isinstance(target, str)
+            else f"{len(target)} rutas de escaneo rápido"
+        )
 
         self._is_scanning = True
         self._detected_threats.clear()
@@ -814,6 +1058,11 @@ class MainWindow(ctk.CTk):
         if self._is_scanning:
             self._scan_uc.cancel_scan()
             # Give thread time to stop cleanly
-            self.after(400, self.destroy)
+            self.after(400, self._shutdown)
         else:
-            self.destroy()
+            self._shutdown()
+
+    def _shutdown(self):
+        if self._monitor is not None and self._monitor.is_running:
+            self._monitor.stop()
+        self.destroy()
