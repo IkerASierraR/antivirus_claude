@@ -45,6 +45,7 @@ if WATCHDOG_AVAILABLE:
             # Small set to avoid double-alerting the same path in quick succession
             self._recently_alerted: set[str] = set()
             self._lock = threading.Lock()
+            self._cleanup_timers: list[threading.Timer] = []
 
         def _scan(self, path: str) -> None:
             with self._lock:
@@ -64,7 +65,18 @@ if WATCHDOG_AVAILABLE:
             finally:
                 # Remove from recently_alerted after a short delay so the same
                 # file can be re-checked on future modifications.
-                threading.Timer(30.0, self._recently_alerted.discard, args=(path,)).start()
+                timer = threading.Timer(30.0, self._recently_alerted.discard, args=(path,))
+                with self._lock:
+                    self._cleanup_timers.append(timer)
+                timer.start()
+
+        def cancel_timers(self) -> None:
+            """Cancel all pending cleanup timers. Called when the observer stops."""
+            with self._lock:
+                for t in self._cleanup_timers:
+                    t.cancel()
+                self._cleanup_timers.clear()
+                self._recently_alerted.clear()
 
         def on_created(self, event: FileSystemEvent) -> None:
             if not event.is_directory:
@@ -97,6 +109,13 @@ class FilesystemMonitor:
         self._paths = watch_paths
         self._on_threat_found = on_threat_found
         self._observer = None
+        self._handler = None  # kept to allow timer cancellation on stop
+
+    def set_threat_callback(self, callback: Callable[[str, str, str], None]) -> None:
+        """Update the threat-found callback (used by the UI after construction)."""
+        self._on_threat_found = callback
+        if self._handler is not None:
+            self._handler._on_threat_found = callback
 
     # ── Public API ──────────────────────────────────
 
@@ -113,6 +132,7 @@ class FilesystemMonitor:
             return True
 
         handler = _ThreatEventHandler(self._engine, self._on_threat_found)
+        self._handler = handler
         self._observer = Observer()
 
         scheduled = 0
@@ -135,6 +155,9 @@ class FilesystemMonitor:
 
     def stop(self) -> None:
         """Stop monitoring gracefully."""
+        if self._handler is not None and WATCHDOG_AVAILABLE:
+            self._handler.cancel_timers()
+            self._handler = None
         if self._observer is not None:
             self._observer.stop()
             self._observer.join(timeout=5)

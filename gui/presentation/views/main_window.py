@@ -38,6 +38,9 @@ logger = logging.getLogger("rustguard.ui")
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
 
+# Max characters for path display in real-time alert toasts
+_TOAST_PATH_MAX_LEN = 55
+
 
 # ── Reusable card widget ────────────────────────────────────────────────────
 
@@ -167,7 +170,7 @@ class MainWindow(ctk.CTk):
 
         # Wire monitor threat callback now that the UI exists
         if self._monitor is not None:
-            self._monitor._on_threat_found = self._on_realtime_threat
+            self._monitor.set_threat_callback(self._on_realtime_threat)
 
     # ── Window setup ───────────────────────────────
 
@@ -702,8 +705,8 @@ class MainWindow(ctk.CTk):
 
         # DB path info
         db_path = (
-            self._engine._db_path
-            if self._engine is not None and hasattr(self._engine, "_db_path")
+            self._engine.db_path
+            if self._engine is not None and hasattr(self._engine, "db_path")
             else "N/A"
         )
         ctk.CTkLabel(
@@ -783,7 +786,7 @@ class MainWindow(ctk.CTk):
             text=f"● AMENAZA DETECTADA", text_color=COLOR_THREAT
         )
         # Show a toast (longer duration for real-time alerts)
-        short_path = path if len(path) <= 55 else "…" + path[-52:]
+        short_path = path if len(path) <= _TOAST_PATH_MAX_LEN else "…" + path[-(_TOAST_PATH_MAX_LEN - 1):]
         self._show_toast(
             f"🚨 [{threat_name[:30]}] en {short_path}",
             error=True,
