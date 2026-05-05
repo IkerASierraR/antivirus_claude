@@ -1,7 +1,14 @@
-# 🛡 RustGuard — Antivirus Desktop
+# 🛡️ RustGuard — Antivirus Desktop
+
+[![CI/CD Pipeline](https://github.com/IkerASierraR/antivirus_claude/actions/workflows/ci.yml/badge.svg)](https://github.com/IkerASierraR/antivirus_claude/actions/workflows/ci.yml)
+[![Python 3.10+](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://python.org)
+[![Rust 1.75+](https://img.shields.io/badge/Rust-1.75+-orange.svg)](https://rust-lang.org)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 Motor de escaneo en **Rust** (PyO3) + Interfaz en **Python** (CustomTkinter)  
 Arquitectura limpia, código de nivel profesional, 100% herramientas gratuitas y open-source.
+
+> 📚 **Documentación completa**: Ver carpeta [`informes/`](informes/) y [`docs/wiki/`](docs/wiki/)
 
 ---
 
@@ -188,3 +195,70 @@ JsonScanRepository.save_session() ← Infrastructure
 - No es cifrado criptográfico; es ofuscación de baja complejidad intencional.
 - Para producción real, considera cifrado AES-256 con `cryptography` (Python) o `aes` (Rust).
 - El motor Rust no realiza conexiones de red; es completamente offline.
+
+---
+
+## Tecnologías utilizadas
+
+| Tecnología | Versión | Uso en RustGuard |
+|---|---|---|
+| **Rust** | 1.75+ | Motor de escaneo (`scan_engine/src/lib.rs`) |
+| **PyO3** | 0.21 | Puente FFI Rust ↔ Python |
+| **maturin** | 1.5+ | Build system para extensión Rust/Python |
+| **Python** | 3.10+ | Lógica de negocio y orquestación |
+| **CustomTkinter** | 5.2+ | Interfaz gráfica de escritorio |
+| **rusqlite** | 0.31 | Acceso a SQLite desde Rust (bundled) |
+| **sha2 + md-5** | 0.10 | Cálculo de hashes SHA-256 y MD5 |
+| **walkdir** | 2 | Traversal recursivo de directorios |
+| **regex** | 1 | Reglas heurísticas (extensión doble) |
+| **serde_json** | 1 | Importación de firmas desde JSON |
+| **PyInstaller** | 6.x | Empaquetado ejecutable standalone |
+
+---
+
+## Despliegue
+
+### Despliegue local (distribución)
+
+```bash
+# 1. Compilar motor Rust
+maturin develop --release
+
+# 2. Empaquetar con PyInstaller
+pyinstaller rustguard.spec
+
+# 3. Distribuir: copiar la carpeta dist/ al destino
+#    El ejecutable incluye Python runtime, CustomTkinter y el motor Rust
+```
+
+| Sistema | Ejecutable generado | Tamaño aprox. |
+|---|---|---|
+| Windows 10/11 (x64) | `dist/RustGuard.exe` | ~80 MB |
+| Linux (x86_64) | `dist/RustGuard` | ~70 MB |
+| macOS | `dist/RustGuard` | ~75 MB |
+
+### Despliegue CI/CD (GitHub Actions)
+
+El pipeline `.github/workflows/ci.yml` automatiza:
+
+1. **Compilación Rust** — `cargo build --release` + `cargo clippy`
+2. **Linting Python** — `ruff check` + `ruff format`
+3. **Build maturin** — Genera el módulo `scan_engine.so/.pyd`
+4. **Análisis de seguridad** — Semgrep (SAST) + SonarQube
+5. **Release** — Binarios compilados para Linux y Windows publicados en GitHub Releases
+
+Ver `.github/workflows/ci.yml` y `docs/github-releases.md` para detalles completos.
+
+---
+
+## Documentación adicional
+
+| Documento | Descripción |
+|---|---|
+| [`informes/FD01-Informe-Factibilidad.md`](informes/FD01-Informe-Factibilidad.md) | Informe de factibilidad + análisis Terraform/AWS |
+| [`informes/FD02-Documento-Vision-Alcance.md`](informes/FD02-Documento-Vision-Alcance.md) | Visión del producto, características y roadmap |
+| [`informes/FD03-Historias-de-Usuario.md`](informes/FD03-Historias-de-Usuario.md) | Historias de usuario, Gherkin y diagramas de secuencia |
+| [`informes/FD04-Diagramas.md`](informes/FD04-Diagramas.md) | Diagramas de clases, BD, componentes, despliegue y arquitectura |
+| [`docs/wiki/Home.md`](docs/wiki/Home.md) | GitHub Wiki — Página principal |
+| [`docs/wiki/GitHub-Projects.md`](docs/wiki/GitHub-Projects.md) | Flujo de trabajo, ramas e issues |
+| [`docs/github-releases.md`](docs/github-releases.md) | Estrategia de versionado y releases |

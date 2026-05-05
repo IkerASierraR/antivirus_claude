@@ -1,0 +1,270 @@
+name: RustGuard CI/CD — DevSecOps Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  release:
+    types: [ published ]
+
+env:
+  CARGO_TERM_COLOR: always
+  PYTHON_VERSION: "3.11"
+  RUST_VERSION: "stable"
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────
+  # JOB 1: Build & Test Rust scan engine
+  # ─────────────────────────────────────────────────────────────────
+  rust-build:
+    name: 🦀 Rust Build & Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          components: rustfmt, clippy
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            scan_engine/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('scan_engine/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Check formatting (rustfmt)
+        working-directory: scan_engine
+        run: cargo fmt --check
+
+      - name: Lint with Clippy
+        working-directory: scan_engine
+        run: cargo clippy -- -D warnings
+
+      - name: Build Rust engine (release)
+        working-directory: scan_engine
+        run: cargo build --release
+
+      - name: Run Rust tests
+        working-directory: scan_engine
+        run: cargo test --release
+
+  # ─────────────────────────────────────────────────────────────────
+  # JOB 2: Python lint and integration check
+  # ─────────────────────────────────────────────────────────────────
+  python-lint:
+    name: 🐍 Python Lint & Type Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install Python dependencies
+        run: |
+          pip install --upgrade pip
+          pip install ruff mypy
+          pip install -r requirements.txt
+
+      - name: Lint with Ruff
+        run: ruff check gui/ --output-format=github
+
+      - name: Check formatting with Ruff
+        run: ruff format --check gui/
+
+      - name: Type check with mypy
+        run: mypy gui/ --ignore-missing-imports --no-strict-optional
+
+  # ─────────────────────────────────────────────────────────────────
+  # JOB 3: Build Python extension with maturin
+  # ─────────────────────────────────────────────────────────────────
+  maturin-build:
+    name: 🔨 maturin Build (Python + Rust)
+    runs-on: ubuntu-latest
+    needs: [ rust-build, python-lint ]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            scan_engine/target
+          key: ${{ runner.os }}-maturin-${{ hashFiles('scan_engine/Cargo.lock') }}
+
+      - name: Install maturin
+        run: pip install maturin
+
+      - name: Build with maturin (develop mode)
+        run: maturin develop --release
+
+      - name: Verify Rust module loads
+        run: python -c "import scan_engine; print('scan_engine loaded OK')"
+
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: scan_engine_wheel
+          path: dist/*.whl
+          retention-days: 7
+
+  # ─────────────────────────────────────────────────────────────────
+  # JOB 4: Security Scan with Semgrep (SAST)
+  # ─────────────────────────────────────────────────────────────────
+  semgrep-sast:
+    name: 🔍 Semgrep SAST Security Scan
+    runs-on: ubuntu-latest
+    # Run on PRs and pushes to main/develop
+    if: github.actor != 'dependabot[bot]'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run Semgrep
+        uses: semgrep/semgrep-action@v1
+        with:
+          config: >-
+            p/python
+            p/rust
+            p/owasp-top-ten
+            p/secrets
+            p/security-audit
+          # Fail on findings of severity ERROR or higher
+          generateSarif: "1"
+        env:
+          SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
+
+      - name: Upload SARIF to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: semgrep.sarif
+        continue-on-error: true
+
+  # ─────────────────────────────────────────────────────────────────
+  # JOB 5: SonarQube Analysis
+  # ─────────────────────────────────────────────────────────────────
+  sonarqube:
+    name: 📊 SonarQube Code Quality
+    runs-on: ubuntu-latest
+    needs: [ python-lint ]
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for SonarQube blame analysis
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pytest pytest-cov
+
+      - name: Run tests with coverage (for SonarQube)
+        run: |
+          pytest gui/ --cov=gui --cov-report=xml:coverage.xml --cov-report=term \
+            --ignore=gui/presentation || true
+        continue-on-error: true
+
+      - name: SonarQube Scan
+        uses: SonarSource/sonarqube-scan-action@master
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+        with:
+          args: >
+            -Dsonar.projectKey=rustguard
+            -Dsonar.projectName=RustGuard
+            -Dsonar.projectVersion=1.0.0
+            -Dsonar.sources=gui,scan_engine/src
+            -Dsonar.python.coverage.reportPaths=coverage.xml
+            -Dsonar.language=python
+            -Dsonar.sourceEncoding=UTF-8
+        continue-on-error: true
+
+  # ─────────────────────────────────────────────────────────────────
+  # JOB 6: Release — Build binaries and publish
+  # ─────────────────────────────────────────────────────────────────
+  release:
+    name: 🚀 Build & Publish Release
+    runs-on: ${{ matrix.os }}
+    needs: [ maturin-build, semgrep-sast ]
+    if: github.event_name == 'release' && github.event.action == 'published'
+
+    strategy:
+      matrix:
+        os: [ ubuntu-latest, windows-latest ]
+        include:
+          - os: ubuntu-latest
+            artifact_name: RustGuard-linux
+            binary_ext: ""
+          - os: windows-latest
+            artifact_name: RustGuard-windows
+            binary_ext: ".exe"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: |
+          pip install maturin pyinstaller
+          pip install -r requirements.txt
+
+      - name: Compile Rust engine
+        run: maturin develop --release
+
+      - name: Package with PyInstaller
+        run: pyinstaller rustguard.spec
+
+      - name: Upload release binary
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ github.event.release.upload_url }}
+          asset_path: dist/RustGuard${{ matrix.binary_ext }}
+          asset_name: ${{ matrix.artifact_name }}${{ matrix.binary_ext }}
+          asset_content_type: application/octet-stream
