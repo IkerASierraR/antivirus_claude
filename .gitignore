@@ -1,0 +1,45 @@
+# ── Rust ──────────────────────────────────────────
+target/
+scan_engine/target/
+**/*.rs.bk
+Cargo.lock          # Excluir en librerías (incluir solo en binarios finales)
+
+# ── Python ────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+*.egg
+
+# ── Compilados PyO3 (generados por maturin) ───────
+gui/*.so
+gui/*.pyd
+gui/*.dylib
+scan_engine/*.so
+scan_engine/*.pyd
+
+# ── PyInstaller ───────────────────────────────────
+dist/
+build/
+*.spec.bak
+
+# ── Datos de usuario (generados en runtime) ───────
+quarantine/
+logs/
+signatures/signatures.db   # DB generada al importar firmas
+
+# ── IDEs ──────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ── OS ────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini

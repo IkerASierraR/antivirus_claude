@@ -1,0 +1,18 @@
+[build-system]
+requires = ["maturin>=1.5,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "scan_engine"
+version = "0.1.0"
+description = "RustGuard high-performance scan engine"
+requires-python = ">=3.10"
+
+[tool.maturin]
+# The Rust crate to compile
+manifest-path = "scan_engine/Cargo.toml"
+# Where maturin places the compiled .pyd/.so
+python-source = "."
+# Module name Python will use: import scan_engine
+module-name = "scan_engine"
+features = ["pyo3/extension-module"]

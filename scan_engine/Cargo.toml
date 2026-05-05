@@ -1,0 +1,50 @@
+[package]
+name = "scan_engine"
+version = "0.1.0"
+edition = "2021"
+description = "RustGuard - High-performance antivirus scan engine"
+
+[lib]
+name = "scan_engine"
+crate-type = ["cdylib"]  # Dynamic library for Python import via PyO3
+
+[dependencies]
+# PyO3: Python/Rust FFI bridge
+pyo3 = { version = "0.21", features = ["extension-module"] }
+
+# Hashing
+sha2 = "0.10"
+md-5 = "0.10"
+hex = "0.4"
+digest = "0.10"
+
+# File system traversal
+walkdir = "2"
+
+# Serialization (for reading JSON signature DB)
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# SQLite for persistent signature database
+rusqlite = { version = "0.31", features = ["bundled"] }
+
+# Cross-platform file metadata
+filetime = "0.2"
+
+# Regex for heuristic rules
+regex = "1"
+
+# Logging
+log = "0.4"
+
+# Atomic operations for cancellation token
+# (std::sync::atomic is used directly, no extra dep needed)
+
+[profile.release]
+opt-level = 3
+lto = true         # Link-time optimization for smaller/faster binary
+codegen-units = 1  # Better optimization
+strip = true       # Strip debug symbols
+
+[build-dependencies]
+# maturin handles the build; no extra build-deps needed
